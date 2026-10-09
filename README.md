@@ -33,15 +33,26 @@ npm run build
 npm run preview
 ```
 
+### Open the Codespaces app on an iPad
+
+You do not install or run Node.js directly on the iPad. Run the development server in Codespaces, then use the iPad's Safari as the screen:
+
+1. Open this repository in GitHub Codespaces.
+2. In the Codespaces terminal, run `npm ci` and then `npm run dev -- --host 0.0.0.0 --port 5173`.
+3. In VS Code, open the **Ports** panel and find port **5173**. If prompted, set its visibility to **Public** so your iPad can reach the forwarded address. Only share that address with people you trust.
+4. Copy the forwarded address and open it in Safari on the iPad. Keep the Codespace running while using this development version.
+
+To run it from your own computer on the same Wi-Fi instead, run the same development command on that computer and open `http://<computer-LAN-address>:5173` in iPad Safari. The computer's firewall must allow local connections to port 5173. The development server still runs on the computer, not on the iPad.
+
+### Use it as an iPad home-screen app
+
+After GitHub Pages has been enabled and its deployment workflow has succeeded, open the HTTPS Pages address in Safari. Tap **Share → Add to Home Screen**. That installed copy can reopen the cached app shell offline after it has first loaded online. It does not need Codespaces to stay running. Your saved data belongs to that exact Safari site address and stays on that iPad; use **Export my data** before clearing Safari website data or moving to another device.
+
 ## Data, privacy, and AI
 
 Your profile, listings, drafts, and plans stay in the current browser's local storage. They are not sent to a server by this app. Use **Export my data** to save a JSON backup somewhere private. Import merges records; it does not replace the whole workspace. Browser storage is specific to the browser and device, so export a backup before changing devices or clearing site data.
 
 There is no connected AI model, paid API, API key, backend, or live job/company search. The prompt builder prepares copyable text for an external AI service you choose. You decide whether to use that service, what information to share, and how to edit the resulting draft. Review every draft for accuracy before using it.
-
-## Install on iPad
-
-The production site is a Progressive Web App (PWA). Open it in Safari over HTTPS, let it load once while online, then use **Share → Add to Home Screen**. The installed app can reopen its cached interface while offline; external links and any AI service still require their own connection. Keep browser storage or an exported backup to preserve your data.
 
 ## GitHub Pages deployment
 
