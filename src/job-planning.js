@@ -225,23 +225,113 @@ export function filterJobListings(scoredJobs, filters = {}) {
   });
 }
 
+export const JOB_STATUSES = ['Saved', 'Interested', 'Preparing', 'Applied', 'Interview', 'Rejected', 'Offer'];
+
+const legacyJobStatus = {
+  Reviewing: 'Interested',
+  Interviewing: 'Interview',
+};
+
+// Maps older saved stages to the current status list. Unknown values (for
+// example a legacy "Closed") are kept as they are so no saved meaning is lost.
+export function normalizeJobStage(stage) {
+  if (!stage || typeof stage !== 'string') return 'Saved';
+  if (JOB_STATUSES.includes(stage)) return stage;
+  return legacyJobStatus[stage] || stage;
+}
+
+export function jobStatusOptions(currentStage) {
+  const stage = normalizeJobStage(currentStage);
+  return JOB_STATUSES.includes(stage) ? JOB_STATUSES : [...JOB_STATUSES, stage];
+}
+
 const applicationStageRank = {
   Researching: 0,
   Reviewing: 0,
   Saved: 0,
+  Interested: 0,
+  Preparing: 0,
   Applied: 1,
   Interviewing: 2,
+  Interview: 2,
   Offer: 3,
   Closed: 4,
+  Rejected: 4,
 };
 
 export function applicationStageForJob(stage) {
-  if (stage === 'Reviewing' || stage === 'Saved') return 'Researching';
-  return applicationStageRank[stage] === undefined ? 'Researching' : stage;
+  const normalized = normalizeJobStage(stage);
+  if (['Saved', 'Interested', 'Preparing'].includes(normalized)) return 'Researching';
+  if (normalized === 'Interview') return 'Interviewing';
+  if (normalized === 'Rejected') return 'Closed';
+  return applicationStageRank[normalized] === undefined ? 'Researching' : normalized;
 }
 
 export function applicationStageToJob(stage) {
-  return stage === 'Researching' ? 'Reviewing' : stage;
+  if (stage === 'Researching') return 'Interested';
+  if (stage === 'Interviewing') return 'Interview';
+  return stage;
+}
+
+export function searchJobs(scoredJobs, query = '', status = '') {
+  if (!Array.isArray(scoredJobs)) return [];
+  const terms = normalize(query).split(' ').filter(Boolean);
+  return scoredJobs.filter(({ job }) => {
+    if (!job || typeof job !== 'object') return false;
+    if (status && normalizeJobStage(job.stage) !== status) return false;
+    if (!terms.length) return true;
+    const haystack = normalize([
+      job.title, job.company, job.city, job.region, job.country, job.source, job.notes,
+      Array.isArray(job.requiredSkills) ? job.requiredSkills.join(' ') : job.requiredSkills,
+    ].filter(Boolean).join(' '));
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+export function countJobsByStatus(jobs) {
+  const counts = Object.fromEntries(JOB_STATUSES.map((status) => [status, 0]));
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    if (!job || typeof job !== 'object') continue;
+    const stage = normalizeJobStage(job.stage);
+    counts[stage] = (counts[stage] || 0) + 1;
+  }
+  return counts;
+}
+
+function daysBetween(fromIso, now) {
+  const from = new Date(fromIso);
+  if (Number.isNaN(from.valueOf())) return null;
+  return Math.floor((now.getTime() - from.getTime()) / 86400000);
+}
+
+// Suggests next steps from the user's own saved jobs. Nothing is invented:
+// each action points at a saved record and a reason the user can check.
+export function jobNextActions(jobs, now = new Date()) {
+  const actions = [];
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    if (!job || typeof job !== 'object') continue;
+    const stage = normalizeJobStage(job.stage);
+    const label = [job.title, job.company].filter(Boolean).join(' at ') || 'Saved job';
+    if (['Rejected', 'Offer', 'Closed'].includes(stage)) continue;
+    if (job.deadline && job.deadlineVerified && !['Applied', 'Interview'].includes(stage)) {
+      const daysLeft = Math.ceil((new Date(`${job.deadline}T23:59:59`).getTime() - now.getTime()) / 86400000);
+      if (daysLeft >= 0 && daysLeft <= 7) {
+        actions.push({ jobId: job.id, priority: 1, label, reason: daysLeft === 0 ? 'Verified deadline is today' : `Verified deadline in ${daysLeft} day${daysLeft === 1 ? '' : 's'}` });
+        continue;
+      }
+    }
+    if (stage === 'Interview') {
+      actions.push({ jobId: job.id, priority: 2, label, reason: 'Interview stage: prepare stories and questions' });
+    } else if (stage === 'Preparing') {
+      actions.push({ jobId: job.id, priority: 3, label, reason: 'Finish tailored resume and cover letter, then apply yourself' });
+    } else if (stage === 'Applied') {
+      const since = daysBetween(job.statusChangedAt || job.createdAt, now);
+      if (since !== null && since >= 14) actions.push({ jobId: job.id, priority: 4, label, reason: `Applied ${since} days ago: consider a polite follow-up` });
+    } else if (!job.sourceVerified) {
+      actions.push({ jobId: job.id, priority: 5, label, reason: 'Open the original posting and confirm it is still live' });
+    }
+  }
+  return actions.sort((first, second) => first.priority - second.priority);
 }
 
 function applicationLocation(application) {

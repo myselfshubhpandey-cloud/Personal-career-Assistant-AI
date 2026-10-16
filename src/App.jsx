@@ -25,7 +25,8 @@ import {
   UserRound,
 } from 'lucide-react';
 import JobDiscovery from './JobDiscovery';
-import { applicationStageForJob, applicationStageToJob, upsertJobApplication } from './job-planning.js';
+import { applicationStageForJob, applicationStageToJob, countJobsByStatus, JOB_STATUSES, jobNextActions, normalizeJobStage, upsertJobApplication } from './job-planning.js';
+import { downloadJobsCsv } from './job-export.js';
 import { mergeImportedData } from './data-transfer.js';
 import {
   COMBINED_LEARNING_PLAN,
@@ -133,7 +134,9 @@ function loadData() {
             return sample ? { ...application, isDemo: true } : application;
           })
           : initialData.applications,
-        jobs: Array.isArray(parsed.jobs) ? parsed.jobs.filter((job) => job && typeof job === 'object') : initialData.jobs,
+        jobs: Array.isArray(parsed.jobs)
+          ? parsed.jobs.filter((job) => job && typeof job === 'object').map((job) => ({ ...job, stage: normalizeJobStage(job.stage) }))
+          : initialData.jobs,
         locationPreferences: Array.isArray(parsed.locationPreferences) ? parsed.locationPreferences.filter((item) => item && typeof item === 'object') : initialData.locationPreferences,
         learningPlan: mergeLearningPlan(parsed.learningPlan),
         letters: Array.isArray(parsed.letters) ? parsed.letters.filter((letter) => letter && typeof letter === 'object') : initialData.letters,
@@ -213,6 +216,19 @@ function App() {
     }
   };
 
+  const exportJobsCsv = () => {
+    if (!data.jobs.length) {
+      notify('No saved jobs yet. Add a job first, then export the CSV.');
+      return;
+    }
+    try {
+      downloadJobsCsv(data.jobs);
+      notify(`Job tracker exported as CSV (${data.jobs.length} ${data.jobs.length === 1 ? 'job' : 'jobs'}).`);
+    } catch (error) {
+      notify(`The CSV could not be exported: ${error.message}`);
+    }
+  };
+
   const importData = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -273,7 +289,9 @@ function App() {
       ));
       return {
         ...current,
-        jobs: current.jobs.map((item) => item.id === jobId ? { ...item, ...changes } : item),
+        jobs: current.jobs.map((item) => item.id === jobId
+          ? { ...item, ...changes, ...(changes.stage && changes.stage !== item.stage ? { statusChangedAt: new Date().toISOString() } : {}) }
+          : item),
         applications: changes.stage && linkedApplication
           ? current.applications.map((application) => application.id === linkedApplication.id
             ? { ...application, stage: applicationStageForJob(changes.stage) }
@@ -293,7 +311,12 @@ function App() {
         ...current,
         applications: current.applications.map((item) => item.id === applicationId ? { ...item, stage } : item),
         jobs: linkedJob
-          ? current.jobs.map((job) => job.id === linkedJob.id ? { ...job, stage: applicationStageToJob(stage) } : job)
+          ? current.jobs.map((job) => {
+            if (job.id !== linkedJob.id) return job;
+            const earlyStage = ['Saved', 'Interested', 'Preparing'].includes(normalizeJobStage(job.stage));
+            if (stage === 'Researching' && earlyStage) return job;
+            return { ...job, stage: applicationStageToJob(stage), statusChangedAt: new Date().toISOString() };
+          })
           : current.jobs,
       };
     });
@@ -304,7 +327,7 @@ function App() {
     'Career profile': <Profile data={data} update={update} />,
     'Resume builder': <Resume data={data} update={update} notify={notify} />,
     'Cover letters': <CoverLetters data={data} update={update} notify={notify} />,
-    'Job discovery': <JobDiscovery data={data} update={update} notify={notify} onCreateLetter={createLetterFromRole} onTailorResume={tailorResumeFromRole} onTrackApplication={trackJobApplication} onUpdateJob={updateJob} />,
+    'Job discovery': <JobDiscovery data={data} update={update} notify={notify} onCreateLetter={createLetterFromRole} onTailorResume={tailorResumeFromRole} onTrackApplication={trackJobApplication} onUpdateJob={updateJob} onExportCsv={exportJobsCsv} />,
     Applications: <Applications data={data} update={update} onUpdateStage={updateApplicationStage} />,
     'Company research': <Research data={data} update={update} />,
     'LinkedIn drafts': <LinkedInDrafts data={data} update={update} />,
@@ -356,6 +379,7 @@ function App() {
         </div>
         <div className="data-tools">
           <button className="button button-outline" onClick={exportData}><Download size={15} /> Export my data</button>
+          <button className="button button-outline" onClick={exportJobsCsv}><Download size={15} /> Export jobs CSV</button>
           <button className="button button-outline" onClick={() => importInput.current?.click()}><Upload size={15} /> Import my data</button>
           <input ref={importInput} type="file" accept="application/json,.json" hidden onChange={importData} />
         </div>
@@ -382,7 +406,7 @@ function Overview({ data, onNavigate }) {
   return (
     <>
       <div className="welcome-row">
-        <div><p className="eyebrow">{today}</p><h1>Good morning, {data.profile.name.split(' ')[0] || 'there'}.</h1><p className="section-description">A clear next step makes the whole search feel lighter.</p></div>
+        <div><p className="eyebrow">{today}</p><h1>{greeting()}, {data.profile.name.split(' ')[0] || 'there'}.</h1><p className="section-description">A clear next step makes the whole search feel lighter.</p></div>
         <button className="button button-primary" onClick={() => onNavigate('Applications')}><Plus size={16} /> Add application</button>
       </div>
       <section className="hero-band">
@@ -395,6 +419,7 @@ function Overview({ data, onNavigate }) {
         <Stat icon={FileText} label="Drafts in progress" value={data.letters.length + data.posts.length} note="Letters and LinkedIn posts" tone="yellow" />
         <Stat icon={Route} label="Roadmap progress" value={`${roadmapDone}/${data.roadmap.length}`} note="Small steps add up" tone="blue" />
       </section>
+      <JobDashboard jobs={data.jobs} onNavigate={onNavigate} />
       <div className="overview-grid">
         <section className="panel pipeline-panel">
           <div className="panel-heading"><div><p className="eyebrow">YOUR SEARCH</p><h3>Application pipeline</h3></div><button className="text-button" onClick={() => onNavigate('Applications')}>See all <ArrowUpRight size={15} /></button></div>
@@ -406,7 +431,7 @@ function Overview({ data, onNavigate }) {
           <div className="recent-list">{data.applications.slice(0, 3).map((item) => <div className="recent-row" key={item.id}><span className="company-stamp">{item.company.slice(0, 1)}</span><span className="recent-company"><strong>{item.company}</strong><small>{item.role}{item.isDemo && <span className="demo-badge">DEMO</span>}</small></span><StageBadge stage={item.stage} /><span className="recent-date">{formatShortDate(item.date)}</span></div>)}</div>
         </section>
         <section className="panel focus-panel">
-          <div className="panel-heading"><div><p className="eyebrow">A GOOD NEXT STEP</p><h3>This week</h3></div><span className="week-marker">WEEK 41</span></div>
+          <div className="panel-heading"><div><p className="eyebrow">A GOOD NEXT STEP</p><h3>This week</h3></div><span className="week-marker">WEEK {isoWeek(new Date())}</span></div>
           {nextMilestone ? <button className="focus-action" onClick={() => onNavigate('Career roadmap')}><span className="focus-icon"><Target size={18} /></span><span><small>ROADMAP MILESTONE</small><strong>{nextMilestone.title}</strong><span>{nextMilestone.detail}</span></span><ChevronRight size={17} /></button> : <p className="empty-note">Your roadmap is clear for now. Add a milestone when a new goal takes shape.</p>}
           <div className="focus-footer"><div className="mini-progress"><span style={{ width: `${(prepDone / data.prep.checks.length) * 100}%` }} /></div><span>{prepDone} of {data.prep.checks.length} interview prep steps done</span><button className="icon-button" onClick={() => onNavigate('Interview prep')} aria-label="Open interview preparation"><ArrowUpRight size={16} /></button></div>
         </section>
@@ -417,6 +442,51 @@ function Overview({ data, onNavigate }) {
         { title: 'Practice out loud', label: 'Interview prep', icon: MessageSquareText, tint: 'quick-coral' },
       ].map(({ title, label, icon: Icon, tint }) => <button className="quick-tool" key={label} onClick={() => onNavigate(label)}><span className={`quick-icon ${tint}`}><Icon size={18} /></span><span><strong>{title}</strong><small>{label}</small></span><ArrowUpRight size={15} /></button>)}</div></section>
     </>
+  );
+}
+
+function isoWeek(date) {
+  const day = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const weekday = day.getUTCDay() || 7;
+  day.setUTCDate(day.getUTCDate() + 4 - weekday);
+  const yearStart = new Date(Date.UTC(day.getUTCFullYear(), 0, 1));
+  return Math.ceil(((day - yearStart) / 86400000 + 1) / 7);
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function JobDashboard({ jobs, onNavigate }) {
+  const savedJobs = Array.isArray(jobs) ? jobs.filter((job) => job && typeof job === 'object') : [];
+  const counts = countJobsByStatus(savedJobs);
+  const actions = jobNextActions(savedJobs).slice(0, 4);
+  const recent = [...savedJobs]
+    .sort((first, second) => String(second.createdAt || '').localeCompare(String(first.createdAt || '')))
+    .slice(0, 4);
+  return (
+    <section className="panel job-dashboard" aria-label="Job tracker summary">
+      <div className="panel-heading"><div><p className="eyebrow">MY JOB TRACKER</p><h3>{savedJobs.length} saved {savedJobs.length === 1 ? 'job' : 'jobs'}</h3></div><button className="text-button" onClick={() => onNavigate('Job discovery')}>Open tracker <ArrowUpRight size={15} /></button></div>
+      <div className="job-status-strip">{JOB_STATUSES.map((status) => <div className="job-status-cell" key={status}><span>{status}</span><strong>{counts[status] || 0}</strong></div>)}</div>
+      {savedJobs.length ? (
+        <div className="job-dashboard-columns">
+          <div>
+            <h4>NEXT ACTIONS</h4>
+            {actions.length ? actions.map((action) => <button className="next-action" key={`${action.jobId}-${action.priority}`} onClick={() => onNavigate('Job discovery')}><span className="focus-icon"><Target size={16} /></span><span><strong>{action.label}</strong><small>{action.reason}</small></span><ChevronRight size={16} /></button>)
+              : <p className="empty-note">No urgent actions from your saved jobs. Add a new role or move one to Preparing.</p>}
+          </div>
+          <div>
+            <h4>RECENTLY ADDED</h4>
+            {recent.map((job) => <button className="recent-job" key={job.id} onClick={() => onNavigate('Job discovery')}><span className="company-stamp">{(job.company || '?').slice(0, 1).toUpperCase()}</span><span><strong>{job.title || 'Untitled role'}</strong><small>{[job.company, job.source].filter(Boolean).join(' · ') || 'No company recorded'}</small></span><span className="job-status-pill">{normalizeJobStage(job.stage)}</span></button>)}
+          </div>
+        </div>
+      ) : (
+        <div className="empty-jobs"><BriefcaseBusiness size={22} /><h3>No jobs saved yet</h3><p>Find a role on an official careers page or job board, check it is real, then add it in Job discovery.</p><button className="button button-outline" onClick={() => onNavigate('Job discovery')}><Plus size={15} /> Add your first job</button></div>
+      )}
+    </section>
   );
 }
 

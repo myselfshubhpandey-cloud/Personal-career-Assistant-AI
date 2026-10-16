@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { ArrowUpRight, BadgeCheck, BriefcaseBusiness, CircleAlert, ExternalLink, FileText, Globe2, Plus, Search, SlidersHorizontal, Target, Trash2 } from 'lucide-react';
-import { analyzeJobDescription, buildJobSearchQuery, CHECKLIST_ITEMS, EXPERIENCE_OPTIONS, externalJobSearches, filterJobListings, findJobApplication, getJobFit, INDUSTRIES, PRIORITY_FAMILIES, priorityForRole } from './job-planning.js';
+import { BadgeCheck, BriefcaseBusiness, CalendarCheck, CircleAlert, Download, ExternalLink, FileText, Globe2, Plus, Search, SlidersHorizontal, Target, Trash2 } from 'lucide-react';
+import { analyzeJobDescription, buildJobSearchQuery, CHECKLIST_ITEMS, countJobsByStatus, EXPERIENCE_OPTIONS, externalJobSearches, filterJobListings, findJobApplication, getJobFit, INDUSTRIES, JOB_STATUSES, jobStatusOptions, normalizeJobStage, PRIORITY_FAMILIES, priorityForRole, searchJobs } from './job-planning.js';
 import './job-planning.css';
 
 const checklistStates = [
@@ -14,6 +14,12 @@ const workModes = ['Remote', 'Hybrid', 'On-site', 'Unknown'];
 const employmentTypes = ['Internship', 'Graduate programme', 'Campus placement', 'Full-time', 'Part-time', 'Contract', 'Temporary', 'Unknown'];
 const authOptions = ['Not stated', 'Must already have authorization', 'Sponsorship may be available', 'Other - verify'];
 const sponsorshipOptions = ['Not stated', 'Yes', 'No', 'Conditional - verify'];
+const sourceSuggestions = ['Company careers page', 'LinkedIn Jobs', 'Naukri', 'Indeed', 'Internshala', 'Instahyre', 'Wellfound', 'Foundit', 'College placement cell', 'Referral', 'Other'];
+
+function todayIso() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
 
 function emptyChecklist() {
   return Object.fromEntries(CHECKLIST_ITEMS.map(([key]) => [key, 'unknown']));
@@ -52,6 +58,9 @@ function emptyJob() {
     requiredSkills: [],
     growthSignal: 'Unknown',
     stage: 'Saved',
+    source: '',
+    lastChecked: todayIso(),
+    notes: '',
     description: '',
     eligibilityChecklist: emptyChecklist(),
   };
@@ -88,7 +97,7 @@ function isInternational(job) {
   return Boolean(job.country) && job.country.trim().toLowerCase() !== 'india';
 }
 
-export default function JobDiscovery({ data, update, notify, onCreateLetter, onTailorResume, onTrackApplication, onUpdateJob }) {
+export default function JobDiscovery({ data, update, notify, onCreateLetter, onTailorResume, onTrackApplication, onUpdateJob, onExportCsv }) {
   const jobs = Array.isArray(data.jobs) ? data.jobs : [];
   const locationPreferences = Array.isArray(data.locationPreferences)
     ? data.locationPreferences.filter((item) => item && typeof item === 'object')
@@ -107,6 +116,9 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
   const [expandedJob, setExpandedJob] = useState(null);
   const [locationDraft, setLocationDraft] = useState({ country: '', city: '', mode: 'Any' });
   const [locationPriority, setLocationPriority] = useState('1');
+  const [trackerQuery, setTrackerQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [formError, setFormError] = useState('');
 
   const setFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
   const setDraftField = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
@@ -138,20 +150,42 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
     deadlineBefore: '',
   });
 
-  const scoredJobs = filterJobListings(
+  const scoredJobs = searchJobs(filterJobListings(
     jobs.map((job) => ({ job, fit: getJobFit(job, data.profile, data.skills, locationPreferences) })),
     filters,
-  )
+  ), trackerQuery, statusFilter)
     .sort((first, second) => second.fit.score - first.fit.score);
+  const statusCounts = countJobsByStatus(jobs);
 
   const searchQuery = buildJobSearchQuery(filters.role, filters.priority);
   const externalSources = externalJobSearches(searchQuery, filters.country, filters.city);
 
   const saveJob = (event) => {
     event.preventDefault();
+    const title = String(draft.title || '').trim();
+    const company = String(draft.company || '').trim();
+    const jobUrl = String(draft.jobUrl || '').trim();
+    if (!title || !company) {
+      setFormError('Job title and company are required.');
+      return;
+    }
+    if (jobUrl && !safeUrl(jobUrl)) {
+      setFormError('The job URL must start with https:// or http://. Copy it from the address bar of the job page.');
+      return;
+    }
+    if (draft.salaryMinimum !== '' && draft.salaryMaximum !== '' && Number(draft.salaryMinimum) > Number(draft.salaryMaximum)) {
+      setFormError('Salary minimum is higher than the maximum. Check both numbers.');
+      return;
+    }
+    setFormError('');
     const skills = Array.isArray(draft.requiredSkills) ? draft.requiredSkills : String(draft.requiredSkills || '').split(/[,;\n]/).map((skill) => skill.trim()).filter(Boolean);
     const job = {
       ...draft,
+      title,
+      company,
+      jobUrl,
+      source: String(draft.source || '').trim(),
+      notes: String(draft.notes || '').trim(),
       id: Date.now(),
       priority: Number(draft.priority) || priorityForRole(draft.title),
       requiredSkills: skills,
@@ -289,13 +323,18 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
           <JobField label="Salary source URL" value={draft.salarySource} onChange={(value) => setDraftField('salarySource', value)} placeholder="Link where range and currency appear" />
           <JobField label="Application deadline" value={draft.deadline} onChange={(value) => setDraftField('deadline', value)} type="date" />
           <JobField label="Deadline source URL" value={draft.deadlineSource} onChange={(value) => setDraftField('deadlineSource', value)} placeholder="Link showing the date" />
-          <JobField label="Original job posting URL" value={draft.jobUrl} onChange={(value) => setDraftField('jobUrl', value)} placeholder="https://..." />
+          <JobField label="Original job posting URL" value={draft.jobUrl} onChange={(value) => setDraftField('jobUrl', value)} type="url" placeholder="https://..." />
+          <label className="job-field"><span>Source (where you found it)</span><input list="job-source-suggestions" value={draft.source} onChange={(event) => setDraftField('source', event.target.value)} placeholder="e.g. Company careers page" /></label>
+          <JobField label="Last checked on" value={draft.lastChecked} onChange={(value) => setDraftField('lastChecked', value)} type="date" />
+          <JobField label="Status" value={draft.stage} onChange={(value) => setDraftField('stage', value)} options={JOB_STATUSES} />
           <JobField label="Required skills (listing wording)" value={draft.requiredSkills.join(', ')} onChange={(value) => setDraftField('requiredSkills', value)} placeholder="Comma-separated; do not infer" />
           <label className="job-check-field"><input type="checkbox" checked={draft.salaryVerified} onChange={(event) => setDraftField('salaryVerified', event.target.checked)} /><span>Salary range and currency verified at source</span></label>
           <label className="job-check-field"><input type="checkbox" checked={draft.deadlineVerified} onChange={(event) => setDraftField('deadlineVerified', event.target.checked)} /><span>Deadline verified at source</span></label>
           <label className="job-check-field"><input type="checkbox" checked={draft.sourceVerified} onChange={(event) => setDraftField('sourceVerified', event.target.checked)} /><span>I reviewed this posting at its source</span></label>
+          <label className="job-field job-description-field"><span>My notes (private)</span><textarea rows={3} value={draft.notes} onChange={(event) => setDraftField('notes', event.target.value)} placeholder="Referral contact, why it fits, questions to check..." /></label>
           <label className="job-field job-description-field"><span>Job description (paste text for local analysis)</span><textarea rows={7} value={draft.description} onChange={(event) => setDraftField('description', event.target.value)} placeholder="Paste the original description. Analysis stays in this browser." /></label>
         </div>
+        {formError && <p className="job-form-error" role="alert"><CircleAlert size={15} /> {formError}</p>}
         <div className="job-form-actions"><span>Salary is shown only when you mark both source and currency verified. No conversion is performed.</span><button className="button button-primary" type="submit"><Plus size={16} /> Save role</button></div>
       </form>}
 
@@ -326,15 +365,31 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
         </div>}
       </section>
 
+      <datalist id="job-source-suggestions">{sourceSuggestions.map((source) => <option key={source} value={source} />)}</datalist>
       <section className="job-results-section">
-        <div className="job-results-heading"><div><p className="eyebrow">USER-VERIFIED OPPORTUNITIES ONLY</p><h2>{scoredJobs.length} saved {scoredJobs.length === 1 ? 'role' : 'roles'}</h2></div><span>Ranked with transparent planning signals · not an eligibility decision</span></div>
+        <div className="job-results-heading"><div><p className="eyebrow">MY JOB TRACKER · USER-VERIFIED ONLY</p><h2>{scoredJobs.length} of {jobs.length} saved {jobs.length === 1 ? 'role' : 'roles'}</h2></div><span>Ranked with transparent planning signals · not an eligibility decision</span></div>
+        <div className="tracker-toolbar">
+          <label className="tracker-search"><Search size={16} /><input type="search" value={trackerQuery} onChange={(event) => setTrackerQuery(event.target.value)} placeholder="Search title, company, skills, notes" aria-label="Search saved jobs" /></label>
+          <button className="button button-outline" type="button" onClick={onExportCsv}><Download size={15} /> Export CSV</button>
+        </div>
+        <div className="status-filter-row" role="group" aria-label="Filter by status">
+          <button type="button" className={`status-chip ${statusFilter === '' ? 'active' : ''}`} aria-pressed={statusFilter === ''} onClick={() => setStatusFilter('')}>All <b>{jobs.length}</b></button>
+          {JOB_STATUSES.map((status) => <button type="button" key={status} className={`status-chip ${statusFilter === status ? 'active' : ''}`} aria-pressed={statusFilter === status} onClick={() => setStatusFilter(statusFilter === status ? '' : status)}>{status} <b>{statusCounts[status] || 0}</b></button>)}
+        </div>
         {scoredJobs.length ? <div className="job-result-list">{scoredJobs.map(({ job, fit }) => {
           const tracked = findJobApplication(job, applications);
           return <article className="job-result" key={job.id}>
-          <div className="job-card-top"><div className="job-company-mark">{(job.company || '?').slice(0, 1).toUpperCase()}</div><div className="job-heading-copy"><div className="job-title-line"><h3>{job.title}</h3><span className="priority-badge">P{fit.priority}</span>{fit.stretch && <span className="stretch-badge">STRETCH ROLE</span>}</div><strong>{job.company}</strong><div className="job-location-line"><span>{[job.city, job.region, job.country].filter(Boolean).join(', ') || 'Location not stated'}</span><span>{job.mode || 'Work mode not stated'}</span><span>{job.employmentType || 'Employment type not stated'}</span></div></div><div className="job-fit-score"><strong>{fit.score}</strong><span>FIT SIGNAL</span></div></div>
+          <div className="job-card-top"><div className="job-company-mark">{(job.company || '?').slice(0, 1).toUpperCase()}</div><div className="job-heading-copy"><div className="job-title-line"><h3>{job.title}</h3><span className="priority-badge">P{fit.priority}</span>{fit.stretch && <span className="stretch-badge">STRETCH ROLE</span>}</div><strong>{job.company}</strong><div className="job-location-line"><span>{[job.city, job.region, job.country].filter(Boolean).join(', ') || 'Location not stated'}</span><span>{job.mode || 'Work mode not stated'}</span><span>{job.employmentType || 'Employment type not stated'}</span></div><div className="job-source-line"><span>Source: {job.source || 'Not recorded'}</span><span>Last checked: {job.lastChecked ? formatDate(job.lastChecked) : 'Not recorded'}</span></div></div><div className="job-fit-score"><strong>{fit.score}</strong><span>FIT SIGNAL</span></div></div>
           <div className="job-facts-row"><span><b>Priority {fit.priority}</b> · {PRIORITY_FAMILIES[fit.priority - 1]?.label || 'Other relevant role'}</span><span>Experience: {job.experienceLevel || 'Unknown'}</span><span>Auth: {job.workAuthorizationRequirement || 'Not stated'}</span><span>Visa: {job.visaSponsorship || 'Not stated'}</span><span>Deadline: {job.deadline && job.deadlineVerified ? job.deadline : 'Unverified / not stated'}</span></div>
-          <div className="job-card-actions"><label className="job-stage-control">Status <select value={job.stage || 'Saved'} onChange={(event) => updateJob(job.id, { stage: event.target.value })}>{['Saved', 'Reviewing', 'Applied', 'Interviewing', 'Offer', 'Closed'].map((stage) => <option key={stage}>{stage}</option>)}</select></label><button className="button button-outline track-job-button" disabled={Boolean(tracked)} onClick={() => onTrackApplication(job)}>{tracked ? 'In tracker' : 'Track application'}</button><button className="text-button" onClick={() => setExpandedJob(expandedJob === job.id ? null : job.id)}>{expandedJob === job.id ? 'Hide details' : 'Eligibility & score details'}</button><button className="text-button" onClick={() => onTailorResume(job)}><FileText size={14} /> Tailor resume</button><button className="text-button" onClick={() => onCreateLetter(job)}><Plus size={14} /> Draft cover letter</button><button className="icon-button danger-button" onClick={() => removeJob(job.id)} aria-label={`Remove ${job.title}`}><Trash2 size={15} /></button></div>
+          <div className="job-card-actions"><label className="job-stage-control">Status <select value={normalizeJobStage(job.stage)} onChange={(event) => updateJob(job.id, { stage: event.target.value })} aria-label={`Status for ${job.title}`}>{jobStatusOptions(job.stage).map((stage) => <option key={stage}>{stage}</option>)}</select></label><button className="button button-outline track-job-button" disabled={Boolean(tracked)} onClick={() => onTrackApplication(job)}>{tracked ? 'In tracker' : 'Track application'}</button><button className="text-button" onClick={() => setExpandedJob(expandedJob === job.id ? null : job.id)}>{expandedJob === job.id ? 'Hide details' : 'Details, notes & score'}</button><button className="text-button" onClick={() => onTailorResume(job)}><FileText size={14} /> Tailor resume</button><button className="text-button" onClick={() => onCreateLetter(job)}><Plus size={14} /> Draft cover letter</button><button className="icon-button danger-button" onClick={() => removeJob(job.id)} aria-label={`Remove ${job.title}`}><Trash2 size={15} /></button></div>
           {expandedJob === job.id && <div className="job-expanded">
+            <div className="job-notes-editor">
+              <label className="job-field"><span>Source</span><input list="job-source-suggestions" value={job.source || ''} onChange={(event) => updateJob(job.id, { source: event.target.value })} placeholder="Where you found it" /></label>
+              <label className="job-field"><span>Original job URL</span><input type="url" value={job.jobUrl || ''} onChange={(event) => updateJob(job.id, { jobUrl: event.target.value.trim() })} placeholder="https://..." /></label>
+              <div className="job-checked-control"><span>Last checked: <b>{job.lastChecked ? formatDate(job.lastChecked) : 'Not recorded'}</b></span><button type="button" className="button button-quiet" onClick={() => { updateJob(job.id, { lastChecked: todayIso() }); notify('Marked as checked today.'); }}><CalendarCheck size={15} /> I checked it today</button></div>
+              <label className="job-field job-notes-field"><span>My notes</span><textarea rows={3} value={job.notes || ''} onChange={(event) => updateJob(job.id, { notes: event.target.value })} placeholder="Private notes. Saved automatically." /></label>
+              {job.jobUrl && !safeUrl(job.jobUrl) && <p className="job-form-error" role="alert"><CircleAlert size={15} /> This URL does not look valid. It should start with https://</p>}
+            </div>
             <div className="job-detail-grid"><Fact label="Region" value={job.region} /><Fact label="City" value={job.city} /><Fact label="Time zone" value={job.timeZone || 'Not stated'} /><Fact label="Relocation" value={job.relocationRequirement || 'Unknown'} /><Fact label="Employer authorization wording" value={job.workAuthorizationRequirement || 'Not stated'} /><Fact label="Visa sponsorship wording" value={job.visaSponsorship || 'Not stated'} /><Fact label="Language" value={job.languageRequirement || 'Not stated'} /><Fact label="Remote eligible countries" value={job.remoteEligibleCountries || 'Not stated; verify'} /><Fact label="Salary" value={job.salaryVerified && job.currency ? `${job.salaryMinimum || '—'}–${job.salaryMaximum || '—'} ${job.currency}` : 'Not verified; hidden'} /><Fact label="Source reviewed" value={job.sourceVerified ? 'Marked reviewed by you' : 'Not yet verified'} /></div>
             {job.salaryVerified && safeUrl(job.salarySource) && <a className="source-evidence-link" href={safeUrl(job.salarySource)} target="_blank" rel="noreferrer">Salary source<ExternalLink size={12} /></a>}
             {job.deadlineVerified && safeUrl(job.deadlineSource) && <a className="source-evidence-link" href={safeUrl(job.deadlineSource)} target="_blank" rel="noreferrer">Deadline source<ExternalLink size={12} /></a>}
@@ -353,6 +408,11 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
 
 function Evidence({ title, items, empty, value }) {
   return <div className="evidence-item"><strong>{title}</strong>{value && <span className="evidence-value">{value}</span>}{items.length ? <ul>{items.map((item, index) => <li key={`${item}-${index}`}>“{item}”</li>)}</ul> : <p>{empty}</p>}</div>;
+}
+
+function formatDate(value) {
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.valueOf()) ? value : new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
 }
 
 function Fact({ label, value }) {
