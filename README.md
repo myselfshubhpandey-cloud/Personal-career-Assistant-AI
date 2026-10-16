@@ -5,9 +5,11 @@ A private, local-first career workspace for planning a job search. It is built w
 ## What the app includes
 
 - **Overview** — job counts by status, next actions from your saved jobs, recently added jobs, application pipeline, drafts, interview-prep status, and roadmap progress.
-- **Career profile** — facts you enter yourself; the app starts blank rather than inventing a career history.
-- **Resume builder** and **Cover letters** — editable drafts for you to review.
-- **Job discovery (job tracker)** — add jobs you checked yourself with title, company, location, job URL, source, last-checked date, description and private notes. Track each job as **Saved, Interested, Preparing, Applied, Interview, Rejected or Offer**. Search by title, company, skills, source or notes, filter by status, open details to edit notes, and compare a pasted job description with your skills. It does not use a live vacancy API.
+- **Career profile** — basic details plus separate lists for education, work experience, skills (with an honest level: Learning, Comfortable or Confident), projects and achievements. Each entry has an **"I confirm this is accurate"** tick. Editing a confirmed entry removes the tick so you re-check it. Deleting asks first. The app starts blank and never fills anything in for you.
+- **Resume builder** — builds a plain-text resume only from confirmed facts. Missing facts appear as highlighted **[placeholders]** with a checklist of gaps. You can tailor it to a saved job (matching confirmed skills are listed first; missing skills are shown to you but never added). Copy it or download a .txt.
+- **Cover letters** — start a draft from any saved job. It uses only confirmed facts and leaves [placeholders] for anything you must write yourself, such as why you want that company. The editor shows how many placeholders are left.
+- **Data & storage** — shows whether saving works, how much data is stored, when you last made a backup, and whether the browser has agreed to protect the data. Explains exactly what happens if browser data is cleared.
+- **Job discovery (job tracker)** — add jobs you checked yourself with title, company, location, job posting URL, **official application URL** (the employer page where you apply), source, last-checked date, description and private notes. Tap **Edit job** on any saved job to change any field. Track each job as **Saved, Interested, Preparing, Applied, Interview, Rejected or Offer**. Search by title, company, skills, source or notes, filter by status, open details to edit notes, and compare a pasted job description with your skills. It does not use a live vacancy API.
 - **CSV export** — **Export jobs CSV** downloads your job tracker as a spreadsheet file that opens in Numbers, Excel or Google Sheets. Unverified salaries are left out, and cells are protected so pasted text cannot run as a spreadsheet formula.
 - **Applications** — a status tracker for opportunities you choose to save.
 - **Company research** — notes for research you conduct.
@@ -56,8 +58,10 @@ The dashboard only looks at jobs you saved. It suggests, in this order: a verifi
 ## Honest limitations
 
 - **No live job search.** There is no free, reliable job feed that can be used without scraping or breaking job-site terms, so jobs are added manually. The external links only open job sites in Safari for your own research.
-- **Data lives in one browser.** Local storage belongs to that browser on that device. Clearing Safari website data, using Private Browsing, or switching devices means your data is not there. Export a JSON backup regularly.
-- **Safari may clear storage for sites you have not opened in a while.** Adding the app to your Home Screen and exporting backups lowers that risk.
+- **Data lives in one browser on one device.** Nothing is uploaded or synced. On iPad, the Home Screen app and a Safari tab usually have **separate** storage, so data typed in one may not appear in the other.
+- **Clearing browser data deletes it permanently.** Settings > Apps > Safari > Clear History and Website Data, removing the site under Website Data, deleting the Home Screen app, or using Private Browsing all lose the data. Only a backup file can bring it back.
+- **Safari may clear storage for sites you have not opened in a while** (around 7 days of Safari use). Home Screen web apps are generally exempt. The Data & storage page can ask the browser for extra protection, but the browser decides.
+- **Drafts are plain text.** Copy them into Pages, Word or Google Docs to format and save as PDF.
 - **Matching is keyword-based.** Skill matching compares words in the job description with skills you entered. It is a planning aid, not an assessment of your ability.
 - **Status migration.** Older saved stages are converted automatically: Reviewing becomes Interested and Interviewing becomes Interview. An older "Closed" value is kept as it is so its meaning is not guessed.
 

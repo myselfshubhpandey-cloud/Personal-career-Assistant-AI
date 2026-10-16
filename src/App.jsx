@@ -11,6 +11,7 @@ import {
   Copy,
   Download,
   FileText,
+  HardDrive,
   Image as ImageIcon,
   Lightbulb,
   Linkedin,
@@ -27,6 +28,11 @@ import {
 import JobDiscovery from './JobDiscovery';
 import { applicationStageForJob, applicationStageToJob, countJobsByStatus, JOB_STATUSES, jobNextActions, normalizeJobStage, upsertJobApplication } from './job-planning.js';
 import { downloadJobsCsv } from './job-export.js';
+import ProfileEditor from './ProfileEditor.jsx';
+import ResumeBuilder from './ResumeBuilder.jsx';
+import DataStorage from './DataStorage.jsx';
+import { buildCoverLetterDraft, confirmedSkillNames, normalizeFacts } from './profile-facts.js';
+import { copyText, downloadBlob } from './browser-actions.js';
 import { mergeImportedData } from './data-transfer.js';
 import {
   COMBINED_LEARNING_PLAN,
@@ -48,10 +54,16 @@ const initialData = {
     education: '',
     expectedGraduation: '',
     selfReportedLevel: '',
+    phone: '',
+    linkedin: '',
+    summaryConfirmed: false,
   },
+  facts: normalizeFacts(undefined, {}),
+  lastBackupAt: '',
   resume: {
     summary: '',
     experience: '',
+    targetJobId: '',
   },
   applications: [
     { id: 1, company: 'Linear', role: 'Product Designer', stage: 'Interviewing', date: '2026-10-08', isDemo: true },
@@ -86,6 +98,7 @@ const navigation = [
   { label: 'Skill gaps', icon: Target },
   { label: 'Career roadmap', icon: Route },
   { label: 'Prompt builder', icon: Lightbulb },
+  { label: 'Data & storage', icon: HardDrive },
 ];
 
 function loadData() {
@@ -112,10 +125,10 @@ function loadData() {
     const resume = { ...initialData.resume, ...(parsed.resume && typeof parsed.resume === 'object' && !Array.isArray(parsed.resume) ? parsed.resume : {}) };
     const prep = { ...initialData.prep, ...(parsed.prep && typeof parsed.prep === 'object' && !Array.isArray(parsed.prep) ? parsed.prep : {}) };
     for (const [key, value] of Object.entries(initialData.profile)) {
-      if (typeof profile[key] !== 'string') profile[key] = value;
+      if (typeof profile[key] !== typeof value) profile[key] = value;
     }
     for (const [key, value] of Object.entries(initialData.resume)) {
-      if (typeof resume[key] !== 'string') resume[key] = value;
+      if (typeof resume[key] !== 'string') resume[key] = value === undefined ? '' : String(resume[key] ?? value);
     }
     if (!Array.isArray(prep.checks)) prep.checks = initialData.prep.checks;
     return {
@@ -125,6 +138,8 @@ function loadData() {
         profile,
         resume,
         prep,
+        facts: normalizeFacts(parsed.facts, profile),
+        lastBackupAt: typeof parsed.lastBackupAt === 'string' ? parsed.lastBackupAt : '',
         applications: Array.isArray(parsed.applications)
           ? parsed.applications.map((application) => {
             if (!application || typeof application !== 'object') {
@@ -203,14 +218,11 @@ function App() {
 
   const exportData = () => {
     try {
-      const file = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(file);
-      const download = document.createElement('a');
-      download.href = url;
-      download.download = `career-studio-${new Date().toISOString().slice(0, 10)}.json`;
-      download.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      notify('Your data export has been prepared as a JSON file.');
+      const backedUpAt = new Date().toISOString();
+      const file = new Blob([JSON.stringify({ ...data, lastBackupAt: backedUpAt }, null, 2)], { type: 'application/json' });
+      downloadBlob(file, `career-studio-backup-${backedUpAt.slice(0, 10)}.json`);
+      update('lastBackupAt', backedUpAt);
+      notify('Backup file downloaded. On iPad, find it in Files > Downloads and move it to iCloud Drive.');
     } catch (error) {
       notify(`Your data could not be exported: ${error.message}`);
     }
@@ -235,7 +247,11 @@ function App() {
     try {
       const imported = JSON.parse(await file.text());
       const merged = mergeImportedData(data, imported);
-      setData(merged);
+      setData({
+        ...merged,
+        facts: normalizeFacts(merged.facts, merged.profile),
+        jobs: (Array.isArray(merged.jobs) ? merged.jobs : []).map((job) => ({ ...job, stage: normalizeJobStage(job.stage) })),
+      });
       setStorageError(storageReady ? '' : 'Browser storage is unavailable; the imported data is visible in this session but is not saved over the existing storage.');
       notify(storageReady ? 'Data imported and merged. Existing saved records were kept.' : 'Data imported for this session but could not be saved safely.');
     } catch (error) {
@@ -246,12 +262,13 @@ function App() {
   };
 
   const createLetterFromRole = (job) => {
-    const letterBody = `Dear Hiring Manager,\n\nI am interested in the ${job.title || 'target role'} opportunity at ${job.company || 'your company'}.\n\n[Add a truthful example from your experience that is relevant to this role.]\n\n[Explain specifically what interests you about this team or work after researching it.]\n\nThank you for your time and consideration.\n\nSincerely,\n${data.profile.name || '[Your name]'}`;
+    const letterBody = buildCoverLetterDraft(data.profile, data.facts, job).text;
     const draft = {
       id: Date.now(),
       company: job.company || 'New company',
       role: job.title || 'Role title',
       body: letterBody,
+      jobId: job.id,
       updated: 'Just now',
     };
     update('letters', [draft, ...data.letters]);
@@ -260,11 +277,9 @@ function App() {
   };
 
   const tailorResumeFromRole = (job) => {
-    const targetText = `Target role: ${job.title || 'Role title'} at ${job.company || 'company'}${job.mode ? ` · ${job.mode}` : ''}.`;
-    const nextSummary = [data.resume.summary, targetText].filter(Boolean).join('\n\n');
-    update('resume', { ...data.resume, summary: nextSummary || targetText });
+    update('resume', { ...data.resume, targetJobId: String(job.id) });
     setActiveView('Resume builder');
-    notify(`Resume summary updated for ${job.title || 'the target role'}.`);
+    notify(`Resume draft tailored for ${job.title || 'the selected job'} using your confirmed facts.`);
   };
 
   const trackJobApplication = (job) => {
@@ -322,12 +337,15 @@ function App() {
     });
   };
 
+  // Job matching uses confirmed profile skills only, the same facts drafts are allowed to use.
+  const jobMatchingData = { ...data, profile: { ...data.profile, skills: confirmedSkillNames(data.facts).join(', ') } };
+
   const page = {
     Overview: <Overview data={data} onNavigate={setActiveView} />,
-    'Career profile': <Profile data={data} update={update} />,
-    'Resume builder': <Resume data={data} update={update} notify={notify} />,
-    'Cover letters': <CoverLetters data={data} update={update} notify={notify} />,
-    'Job discovery': <JobDiscovery data={data} update={update} notify={notify} onCreateLetter={createLetterFromRole} onTailorResume={tailorResumeFromRole} onTrackApplication={trackJobApplication} onUpdateJob={updateJob} onExportCsv={exportJobsCsv} />,
+    'Career profile': <ProfileEditor data={data} update={update} getInitials={getInitials} />,
+    'Resume builder': <ResumeBuilder data={data} update={update} notify={notify} onNavigate={setActiveView} />,
+    'Cover letters': <CoverLetters data={data} update={update} notify={notify} onCreateFromJob={createLetterFromRole} />,
+    'Job discovery': <JobDiscovery data={jobMatchingData} update={update} notify={notify} onCreateLetter={createLetterFromRole} onTailorResume={tailorResumeFromRole} onTrackApplication={trackJobApplication} onUpdateJob={updateJob} onExportCsv={exportJobsCsv} />,
     Applications: <Applications data={data} update={update} onUpdateStage={updateApplicationStage} />,
     'Company research': <Research data={data} update={update} />,
     'LinkedIn drafts': <LinkedInDrafts data={data} update={update} />,
@@ -336,6 +354,7 @@ function App() {
     'Skill gaps': <SkillGaps data={data} update={update} />,
     'Career roadmap': <Roadmap data={data} update={update} />,
     'Prompt builder': <PromptBuilder data={data} notify={notify} />,
+    'Data & storage': <DataStorage data={data} storageReady={storageReady} onExportJson={exportData} onExportCsv={exportJobsCsv} onImport={() => importInput.current?.click()} />,
   }[activeView];
 
   return (
@@ -494,29 +513,10 @@ function Stat({ icon: Icon, label, value, note, tone }) {
   return <div className="stat-item"><span className={`stat-icon ${tone}`}><Icon size={17} /></span><span className="stat-label">{label}</span><strong>{value}</strong><small>{note}</small></div>;
 }
 
-function Profile({ data, update }) {
-  const profile = data.profile;
-  const set = (field) => (value) => update('profile', { ...profile, [field]: value });
-  return <><SectionTitle eyebrow="THE FOUNDATION" title="Career profile" description="Profile details guide role matching. Location and work authorization are never assumed." /><div className="profile-layout"><section className="panel form-panel"><div className="form-heading"><span className="form-avatar">{getInitials(profile.name)}</span><div><h3>Your profile</h3><p>Only details you provide are used to guide fit notes.</p></div></div><div className="form-grid"><Field label="Professional name" value={profile.name} onChange={set('name')} /><Field label="Career focus" value={profile.role} onChange={set('role')} /><Field label="Education" value={profile.education} onChange={set('education')} /><Field label="Expected graduation" value={profile.expectedGraduation} onChange={set('expectedGraduation')} /><Field label="Overall self-reported level" value={profile.selfReportedLevel} onChange={set('selfReportedLevel')} /><Field label="Current city (optional; not a search limit)" value={profile.city} onChange={set('city')} /><Field label="Email (optional)" value={profile.email} onChange={set('email')} /><div className="field-span"><Field label="Professional summary (only use verified facts)" value={profile.headline} onChange={set('headline')} as="textarea" rows={3} /></div><div className="field-span"><Field label="Skills you want to include" value={profile.skills} onChange={set('skills')} as="textarea" rows={3} placeholder="Add only skills you can substantiate. Rate each skill separately in Skill gaps." /></div></div><div className="inline-saved"><Check size={14} /> Changes save automatically in this browser.</div></section><aside className="profile-aside"><div className="profile-note"><span className="note-icon"><Lightbulb size={18} /></span><p className="eyebrow">GLOBAL SEARCH DEFAULT</p><h3>No preferred city or country set.</h3><p>India and international markets remain open. Work authorization and sponsorship need verification for each role.</p></div><div className="profile-progress"><div className="progress-head"><span>Profile strength</span><strong>{[profile.name, profile.education, profile.expectedGraduation, profile.headline].filter(Boolean).length}/4</strong></div><div className="progress-track"><span style={{ width: `${([profile.name, profile.education, profile.expectedGraduation, profile.headline].filter(Boolean).length / 4) * 100}%` }} /></div><small>Only information you provide is used in tailored drafts.</small></div></aside></div></>;
-}
-
-function Resume({ data, update, notify }) {
-  const resume = data.resume;
-  const set = (field) => (value) => update('resume', { ...resume, [field]: value });
-  const download = () => {
-    const content = `${data.profile.name}\n${data.profile.role} · ${data.profile.city} · ${data.profile.email}\n\n${data.profile.headline}\n\nPROFILE\n${resume.summary}\n\nEXPERIENCE\n${resume.experience}\n\nSKILLS\n${data.profile.skills}`;
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
-    link.download = `${(data.profile.name || 'career').toLowerCase().replace(/\s+/g, '-')}-resume.txt`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    notify('Resume downloaded as a text draft.');
-  };
-  return <><SectionTitle eyebrow="YOUR STORY, CLEARLY TOLD" title="Resume builder" description="Shape the parts of your story. This simple editor stays on your device." action={<button className="button button-primary" onClick={download}><ArrowDownToLine size={16} /> Download draft</button>} /><div className="editor-layout"><section className="panel editor-fields"><Field label="Professional summary" value={resume.summary} onChange={set('summary')} as="textarea" rows={7} /><Field label="Experience and impact" value={resume.experience} onChange={set('experience')} as="textarea" rows={14} placeholder="Role | Company | Dates\nWhat changed because of your work?" /><p className="field-hint">Tip: add outcomes and context, not only responsibilities.</p></section><aside className="resume-preview"><div className="preview-toolbar"><span><span className="preview-dot" /> LIVE DRAFT</span><span>Plain text</span></div><article className="resume-paper"><h2>{data.profile.name || 'Your name'}</h2><p className="paper-role">{data.profile.role} · {data.profile.city}</p><p className="paper-contact">{data.profile.email}</p><div className="paper-rule" /><p>{data.profile.headline}</p><h4>PROFILE</h4><p className="paper-body">{resume.summary}</p><h4>EXPERIENCE</h4><p className="paper-body preline">{resume.experience}</p><h4>SKILLS</h4><p className="paper-body">{data.profile.skills}</p></article></aside></div></>;
-}
-
-function CoverLetters({ data, update, notify }) {
+function CoverLetters({ data, update, notify, onCreateFromJob }) {
   const [selectedId, setSelectedId] = useState(data.letters[0]?.id ?? null);
+  const [jobChoice, setJobChoice] = useState('');
+  const jobs = Array.isArray(data.jobs) ? data.jobs : [];
   const selected = data.letters.find((letter) => letter.id === selectedId);
   const change = (field, value) => update('letters', data.letters.map((letter) => letter.id === selectedId ? { ...letter, [field]: value, updated: 'Just now' } : letter));
   const addDraft = () => {
@@ -525,7 +525,7 @@ function CoverLetters({ data, update, notify }) {
     setSelectedId(draft.id);
   };
   const remove = (id) => { update('letters', data.letters.filter((letter) => letter.id !== id)); if (selectedId === id) setSelectedId(null); };
-  return <><SectionTitle eyebrow="A HUMAN FIRST IMPRESSION" title="Cover letters" description="Draft a specific note for each role. Nothing is sent from here." action={<button className="button button-primary" onClick={addDraft}><Plus size={16} /> New draft</button>} /><div className="split-workspace"><aside className="draft-list"><div className="list-heading"><span>YOUR DRAFTS</span><span>{data.letters.length}</span></div>{data.letters.map((letter) => <button className={`draft-item ${selectedId === letter.id ? 'selected' : ''}`} key={letter.id} onClick={() => setSelectedId(letter.id)}><span className="draft-company-icon">{letter.company.slice(0, 1)}</span><span><strong>{letter.company}</strong><small>{letter.role}</small><small className="draft-date">Edited {letter.updated}</small></span></button>)}{!data.letters.length && <p className="empty-note">No drafts yet. Start with one role you care about.</p>}</aside>{selected ? <section className="panel draft-editor"><div className="draft-meta"><Field label="Company" value={selected.company} onChange={(value) => change('company', value)} /><Field label="Role" value={selected.role} onChange={(value) => change('role', value)} /></div><Field label="Your letter" value={selected.body} onChange={(value) => change('body', value)} as="textarea" rows={17} placeholder="Start with what genuinely interests you about this team..." /><div className="editor-bottom"><span>{selected.body.length} characters · Saved locally</span><button className="button button-quiet" onClick={() => { navigator.clipboard?.writeText(selected.body); notify('Draft copied to clipboard.'); }}><Copy size={15} /> Copy draft</button><button className="icon-button danger-button" onClick={() => remove(selected.id)} aria-label="Delete draft"><Trash2 size={16} /></button></div></section> : <div className="empty-workspace"><Mail size={23} /><h3>Choose a draft to begin</h3><p>Each letter is a fresh chance to connect your experience to a role.</p><button className="button button-outline" onClick={addDraft}><Plus size={16} /> Create a draft</button></div>}</div></>;
+  return <><SectionTitle eyebrow="A HUMAN FIRST IMPRESSION" title="Cover letters" description="Drafts use only facts you confirmed in Career profile. Highlighted brackets show what you still need to write. Nothing is sent from here." action={<button className="button button-primary" onClick={addDraft}><Plus size={16} /> Blank draft</button>} /><form className="panel letter-from-job" onSubmit={(event) => { event.preventDefault(); const job = jobs.find((item) => String(item.id) === jobChoice); if (job) onCreateFromJob(job); }}><label className="field"><span>Start a draft from a saved job</span><select value={jobChoice} onChange={(event) => setJobChoice(event.target.value)}><option value="">{jobs.length ? 'Choose a saved job' : 'No saved jobs yet: add one in Job discovery'}</option>{jobs.map((job) => <option key={job.id} value={String(job.id)}>{[job.title, job.company].filter(Boolean).join(' at ') || 'Untitled job'}</option>)}</select></label><button className="button button-outline" type="submit" disabled={!jobChoice}><Plus size={15} /> Create draft</button></form><div className="split-workspace"><aside className="draft-list"><div className="list-heading"><span>YOUR DRAFTS</span><span>{data.letters.length}</span></div>{data.letters.map((letter) => <button className={`draft-item ${selectedId === letter.id ? 'selected' : ''}`} key={letter.id} onClick={() => setSelectedId(letter.id)}><span className="draft-company-icon">{letter.company.slice(0, 1)}</span><span><strong>{letter.company}</strong><small>{letter.role}</small><small className="draft-date">Edited {letter.updated}</small></span></button>)}{!data.letters.length && <p className="empty-note">No drafts yet. Start with one role you care about.</p>}</aside>{selected ? <section className="panel draft-editor"><div className="draft-meta"><Field label="Company" value={selected.company} onChange={(value) => change('company', value)} /><Field label="Role" value={selected.role} onChange={(value) => change('role', value)} /></div><Field label="Your letter" value={selected.body} onChange={(value) => change('body', value)} as="textarea" rows={17} placeholder="Start with what genuinely interests you about this team..." /><div className="editor-bottom"><span>{selected.body.length} characters · Saved locally{(selected.body.match(/\[[^\]]+\]/g) || []).length ? <b className="placeholder-count"> · {(selected.body.match(/\[[^\]]+\]/g) || []).length} [placeholders] still to fill</b> : ''}</span><button className="button button-quiet" onClick={() => copyText(selected.body, notify, 'Draft copied to clipboard.')}><Copy size={15} /> Copy draft</button><button className="icon-button danger-button" onClick={() => remove(selected.id)} aria-label="Delete draft"><Trash2 size={16} /></button></div></section> : <div className="empty-workspace"><Mail size={23} /><h3>Choose a draft to begin</h3><p>Each letter is a fresh chance to connect your experience to a role.</p><button className="button button-outline" onClick={addDraft}><Plus size={16} /> Create a draft</button></div>}</div></>;
 }
 
 function Applications({ data, update, onUpdateStage }) {
@@ -799,8 +799,8 @@ function PromptBuilder({ data, notify }) {
   const [target, setTarget] = useState(data.profile.role);
   const [company, setCompany] = useState('');
   const [focus, setFocus] = useState('');
-  const prompt = `Act as a thoughtful career writing partner. Help me prepare for a ${target || '[target role]'} opportunity${company ? ` at ${company}` : ''}.\n\nMy background: ${data.profile.headline}\nRelevant strengths: ${data.profile.skills}\n\nI want help with: ${focus || '[describe the task]'}\n\nAsk clarifying questions when context is missing. Use only the experience and facts I provide; do not invent metrics, credentials, company research, or outcomes. Keep the tone specific and human. Offer a draft for me to review, not a message to send.`;
-  return <><SectionTitle eyebrow="A CLEARER ASK, BETTER DRAFTS" title="Prompt builder" description="Create a reusable prompt for an AI tool you choose. Nothing is sent from this page." /><div className="prompt-layout"><section className="panel prompt-controls"><div className="prompt-note"><Sparkles size={17} /><span>This builds text only. No AI service is connected.</span></div><Field label="Target role" value={target} onChange={setTarget} placeholder="e.g. Product designer" /><Field label="Company (optional)" value={company} onChange={setCompany} placeholder="e.g. A team you are exploring" /><Field label="What do you want help with?" value={focus} onChange={setFocus} as="textarea" rows={5} placeholder="e.g. Tailor my experience to this role without overstating my impact." /><div className="prompt-source"><span className="top-avatar">{getInitials(data.profile.name)}</span><span><strong>Using your career profile</strong><small>{data.profile.name} · {data.profile.role}</small></span><button className="text-button" onClick={() => notify('Edit your source details in Career profile.')}>Edit profile <ArrowUpRight size={14} /></button></div></section><section className="prompt-output"><div className="output-header"><div><span className="output-dot" /><span>YOUR PROMPT</span></div><button className="icon-button copy-icon" onClick={() => { navigator.clipboard?.writeText(prompt); notify('Prompt copied to clipboard.'); }} aria-label="Copy prompt" title="Copy prompt"><Copy size={16} /></button></div><pre>{prompt}</pre><div className="output-footer"><span>Review details before using in another service.</span><span>{prompt.length} characters</span></div></section></div><p className="privacy-note"><BadgeCheck size={15} /> Prompt text is generated in your browser. It is not submitted to an AI provider.</p></>;
+  const prompt = `Act as a thoughtful career writing partner. Help me prepare for a ${target || '[target role]'} opportunity${company ? ` at ${company}` : ''}.\n\nMy background: ${data.profile.summaryConfirmed && data.profile.headline ? data.profile.headline : '[confirmed summary not added yet]'}\nConfirmed skills: ${confirmedSkillNames(data.facts).join(', ') || '[no confirmed skills yet]'}\n\nI want help with: ${focus || '[describe the task]'}\n\nAsk clarifying questions when context is missing. Use only the experience and facts I provide; do not invent metrics, credentials, company research, or outcomes. Keep the tone specific and human. Offer a draft for me to review, not a message to send.`;
+  return <><SectionTitle eyebrow="A CLEARER ASK, BETTER DRAFTS" title="Prompt builder" description="Create a reusable prompt for an AI tool you choose. Nothing is sent from this page." /><div className="prompt-layout"><section className="panel prompt-controls"><div className="prompt-note"><Sparkles size={17} /><span>This builds text only. No AI service is connected.</span></div><Field label="Target role" value={target} onChange={setTarget} placeholder="e.g. Product designer" /><Field label="Company (optional)" value={company} onChange={setCompany} placeholder="e.g. A team you are exploring" /><Field label="What do you want help with?" value={focus} onChange={setFocus} as="textarea" rows={5} placeholder="e.g. Tailor my experience to this role without overstating my impact." /><div className="prompt-source"><span className="top-avatar">{getInitials(data.profile.name)}</span><span><strong>Using your career profile</strong><small>{data.profile.name} · {data.profile.role}</small></span><button className="text-button" onClick={() => notify('Edit your source details in Career profile.')}>Edit profile <ArrowUpRight size={14} /></button></div></section><section className="prompt-output"><div className="output-header"><div><span className="output-dot" /><span>YOUR PROMPT</span></div><button className="icon-button copy-icon" onClick={() => copyText(prompt, notify, 'Prompt copied to clipboard.')} aria-label="Copy prompt" title="Copy prompt"><Copy size={16} /></button></div><pre>{prompt}</pre><div className="output-footer"><span>Review details before using in another service.</span><span>{prompt.length} characters</span></div></section></div><p className="privacy-note"><BadgeCheck size={15} /> Prompt text is generated in your browser. It is not submitted to an AI provider.</p></>;
 }
 
 function StageBadge({ stage }) {

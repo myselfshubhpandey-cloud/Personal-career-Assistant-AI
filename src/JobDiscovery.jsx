@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { BadgeCheck, BriefcaseBusiness, CalendarCheck, CircleAlert, Download, ExternalLink, FileText, Globe2, Plus, Search, SlidersHorizontal, Target, Trash2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { BadgeCheck, BriefcaseBusiness, CalendarCheck, Check, CircleAlert, Download, Pencil, Send, ExternalLink, FileText, Globe2, Plus, Search, SlidersHorizontal, Target, Trash2 } from 'lucide-react';
 import { analyzeJobDescription, buildJobSearchQuery, CHECKLIST_ITEMS, countJobsByStatus, EXPERIENCE_OPTIONS, externalJobSearches, filterJobListings, findJobApplication, getJobFit, INDUSTRIES, JOB_STATUSES, jobStatusOptions, normalizeJobStage, PRIORITY_FAMILIES, priorityForRole, searchJobs } from './job-planning.js';
 import './job-planning.css';
 
@@ -55,7 +55,8 @@ function emptyJob() {
     deadlineSource: '',
     sourceVerified: false,
     jobUrl: '',
-    requiredSkills: [],
+    requiredSkills: '',
+    applicationUrl: '',
     growthSignal: 'Unknown',
     stage: 'Saved',
     source: '',
@@ -82,6 +83,16 @@ function JobField({ label, value, onChange, options, type = 'text', placeholder 
       )}
     </label>
   );
+}
+
+function skillsToText(value) {
+  return Array.isArray(value) ? value.join(', ') : String(value || '');
+}
+
+function parseSkills(value) {
+  return (Array.isArray(value) ? value : String(value || '').split(/[,;\n]/))
+    .map((skill) => String(skill || '').trim())
+    .filter(Boolean);
 }
 
 function safeUrl(value) {
@@ -119,6 +130,8 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
   const [trackerQuery, setTrackerQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [formError, setFormError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const formRef = useRef(null);
 
   const setFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
   const setDraftField = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
@@ -165,6 +178,7 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
     const title = String(draft.title || '').trim();
     const company = String(draft.company || '').trim();
     const jobUrl = String(draft.jobUrl || '').trim();
+    const applicationUrl = String(draft.applicationUrl || '').trim();
     if (!title || !company) {
       setFormError('Job title and company are required.');
       return;
@@ -173,32 +187,63 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
       setFormError('The job URL must start with https:// or http://. Copy it from the address bar of the job page.');
       return;
     }
+    if (applicationUrl && !safeUrl(applicationUrl)) {
+      setFormError('The official application URL must start with https:// or http://. Copy it from the page where you apply.');
+      return;
+    }
     if (draft.salaryMinimum !== '' && draft.salaryMaximum !== '' && Number(draft.salaryMinimum) > Number(draft.salaryMaximum)) {
       setFormError('Salary minimum is higher than the maximum. Check both numbers.');
       return;
     }
     setFormError('');
-    const skills = Array.isArray(draft.requiredSkills) ? draft.requiredSkills : String(draft.requiredSkills || '').split(/[,;\n]/).map((skill) => skill.trim()).filter(Boolean);
-    const job = {
+    const fields = {
       ...draft,
       title,
       company,
       jobUrl,
+      applicationUrl,
       source: String(draft.source || '').trim(),
       notes: String(draft.notes || '').trim(),
-      id: Date.now(),
-      priority: Number(draft.priority) || priorityForRole(draft.title),
-      requiredSkills: skills,
-      minimumYears: draft.minimumYears === '' ? null : Number(draft.minimumYears),
-      createdAt: new Date().toISOString(),
-      sourceType: 'manual',
+      priority: Number(draft.priority) || priorityForRole(title),
+      requiredSkills: parseSkills(draft.requiredSkills),
+      minimumYears: draft.minimumYears === '' || draft.minimumYears === null || draft.minimumYears === undefined ? null : Number(draft.minimumYears),
     };
-    update('jobs', [job, ...jobs]);
+    if (editingId !== null) {
+      const { id: _ignoredId, createdAt: _ignoredCreated, ...changes } = fields;
+      updateJob(editingId, { ...changes, updatedAt: new Date().toISOString() });
+      notify('Job updated.');
+    } else {
+      update('jobs', [{ ...fields, id: Date.now(), createdAt: new Date().toISOString(), sourceType: 'manual' }, ...jobs]);
+      setDescriptionText('');
+      setAnalysis(null);
+      notify('Job saved to your tracker.');
+    }
     setDraft(emptyJob());
+    setEditingId(null);
     setIsAdding(false);
-    setDescriptionText('');
-    setAnalysis(null);
-    notify('Manually entered opportunity saved.');
+  };
+
+  const startEdit = (job) => {
+    setDraft({
+      ...emptyJob(),
+      ...job,
+      requiredSkills: skillsToText(job.requiredSkills),
+      minimumYears: job.minimumYears === null || job.minimumYears === undefined ? '' : String(job.minimumYears),
+      priority: job.priority ? String(job.priority) : '',
+      stage: normalizeJobStage(job.stage),
+      eligibilityChecklist: { ...emptyChecklist(), ...(job.eligibilityChecklist || {}) },
+    });
+    setEditingId(job.id);
+    setFormError('');
+    setIsAdding(true);
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+  };
+
+  const cancelForm = () => {
+    setIsAdding(false);
+    setEditingId(null);
+    setFormError('');
+    setDraft(emptyJob());
   };
 
   const analyzeDescription = () => {
@@ -207,8 +252,10 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
   };
 
   const startFromAnalysis = () => {
-    setDraft({ ...emptyJob(), description: descriptionText, requiredSkills: analysis?.matchedSkills || [] });
+    setDraft({ ...emptyJob(), description: descriptionText, requiredSkills: skillsToText(analysis?.matchedSkills) });
+    setEditingId(null);
     setIsAdding(true);
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
   const updateJob = (jobId, changes) => onUpdateJob
@@ -230,7 +277,7 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
           <h1>Job discovery</h1>
           <p className="section-description">All locations remain open. Add a listing you verified, or search outside the app. There is no live job feed.</p>
         </div>
-        <button className="button button-primary" onClick={() => { setDraft(emptyJob()); setIsAdding((open) => !open); }}><Plus size={16} /> Add verified listing</button>
+        <button className="button button-primary" onClick={() => { const opening = !isAdding || editingId !== null; setDraft(emptyJob()); setEditingId(null); setFormError(''); setIsAdding(opening); }}><Plus size={16} /> Add verified listing</button>
       </div>
 
       <section className="job-source-band">
@@ -296,8 +343,8 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
         </div>
       </section>
 
-      {isAdding && <form className="panel job-entry-panel" onSubmit={saveJob}>
-        <div className="job-panel-head"><div><BriefcaseBusiness size={17} /><div><strong>Add a role you checked at its source</strong><small>Unknown facts stay unknown. No listing is fetched or verified by this app.</small></div></div><button type="button" className="icon-button" aria-label="Close form" onClick={() => setIsAdding(false)}>×</button></div>
+      {isAdding && <form className="panel job-entry-panel" onSubmit={saveJob} ref={formRef} noValidate>
+        <div className="job-panel-head"><div><BriefcaseBusiness size={17} /><div><strong>{editingId !== null ? 'Edit saved job' : 'Add a role you checked at its source'}</strong><small>Unknown facts stay unknown. No listing is fetched or verified by this app.</small></div></div><button type="button" className="icon-button" aria-label="Close form" onClick={cancelForm}>×</button></div>
         <div className="job-entry-grid">
           <JobField label="Job title" value={draft.title} onChange={(value) => setDraftField('title', value)} required placeholder="Exact title from posting" />
           <JobField label="Employer" value={draft.company} onChange={(value) => setDraftField('company', value)} required placeholder="Employer name" />
@@ -323,11 +370,12 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
           <JobField label="Salary source URL" value={draft.salarySource} onChange={(value) => setDraftField('salarySource', value)} placeholder="Link where range and currency appear" />
           <JobField label="Application deadline" value={draft.deadline} onChange={(value) => setDraftField('deadline', value)} type="date" />
           <JobField label="Deadline source URL" value={draft.deadlineSource} onChange={(value) => setDraftField('deadlineSource', value)} placeholder="Link showing the date" />
-          <JobField label="Original job posting URL" value={draft.jobUrl} onChange={(value) => setDraftField('jobUrl', value)} type="url" placeholder="https://..." />
+          <JobField label="Original job posting URL" value={draft.jobUrl} onChange={(value) => setDraftField('jobUrl', value)} type="url" placeholder="https://... (where you read the job)" />
+          <JobField label="Official application URL" value={draft.applicationUrl} onChange={(value) => setDraftField('applicationUrl', value)} type="url" placeholder="https://... (employer page where you apply)" />
           <label className="job-field"><span>Source (where you found it)</span><input list="job-source-suggestions" value={draft.source} onChange={(event) => setDraftField('source', event.target.value)} placeholder="e.g. Company careers page" /></label>
           <JobField label="Last checked on" value={draft.lastChecked} onChange={(value) => setDraftField('lastChecked', value)} type="date" />
           <JobField label="Status" value={draft.stage} onChange={(value) => setDraftField('stage', value)} options={JOB_STATUSES} />
-          <JobField label="Required skills (listing wording)" value={draft.requiredSkills.join(', ')} onChange={(value) => setDraftField('requiredSkills', value)} placeholder="Comma-separated; do not infer" />
+          <JobField label="Required skills (listing wording)" value={skillsToText(draft.requiredSkills)} onChange={(value) => setDraftField('requiredSkills', value)} placeholder="Comma-separated; do not infer" />
           <label className="job-check-field"><input type="checkbox" checked={draft.salaryVerified} onChange={(event) => setDraftField('salaryVerified', event.target.checked)} /><span>Salary range and currency verified at source</span></label>
           <label className="job-check-field"><input type="checkbox" checked={draft.deadlineVerified} onChange={(event) => setDraftField('deadlineVerified', event.target.checked)} /><span>Deadline verified at source</span></label>
           <label className="job-check-field"><input type="checkbox" checked={draft.sourceVerified} onChange={(event) => setDraftField('sourceVerified', event.target.checked)} /><span>I reviewed this posting at its source</span></label>
@@ -335,7 +383,7 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
           <label className="job-field job-description-field"><span>Job description (paste text for local analysis)</span><textarea rows={7} value={draft.description} onChange={(event) => setDraftField('description', event.target.value)} placeholder="Paste the original description. Analysis stays in this browser." /></label>
         </div>
         {formError && <p className="job-form-error" role="alert"><CircleAlert size={15} /> {formError}</p>}
-        <div className="job-form-actions"><span>Salary is shown only when you mark both source and currency verified. No conversion is performed.</span><button className="button button-primary" type="submit"><Plus size={16} /> Save role</button></div>
+        <div className="job-form-actions"><span>Salary is shown only when you mark both source and currency verified. No conversion is performed.</span><span className="job-form-buttons"><button type="button" className="button button-outline" onClick={cancelForm}>Cancel</button><button className="button button-primary" type="submit">{editingId !== null ? <><Check size={16} /> Save changes</> : <><Plus size={16} /> Save role</>}</button></span></div>
       </form>}
 
       <section className="panel jd-analyzer">
@@ -381,19 +429,21 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
           return <article className="job-result" key={job.id}>
           <div className="job-card-top"><div className="job-company-mark">{(job.company || '?').slice(0, 1).toUpperCase()}</div><div className="job-heading-copy"><div className="job-title-line"><h3>{job.title}</h3><span className="priority-badge">P{fit.priority}</span>{fit.stretch && <span className="stretch-badge">STRETCH ROLE</span>}</div><strong>{job.company}</strong><div className="job-location-line"><span>{[job.city, job.region, job.country].filter(Boolean).join(', ') || 'Location not stated'}</span><span>{job.mode || 'Work mode not stated'}</span><span>{job.employmentType || 'Employment type not stated'}</span></div><div className="job-source-line"><span>Source: {job.source || 'Not recorded'}</span><span>Last checked: {job.lastChecked ? formatDate(job.lastChecked) : 'Not recorded'}</span></div></div><div className="job-fit-score"><strong>{fit.score}</strong><span>FIT SIGNAL</span></div></div>
           <div className="job-facts-row"><span><b>Priority {fit.priority}</b> · {PRIORITY_FAMILIES[fit.priority - 1]?.label || 'Other relevant role'}</span><span>Experience: {job.experienceLevel || 'Unknown'}</span><span>Auth: {job.workAuthorizationRequirement || 'Not stated'}</span><span>Visa: {job.visaSponsorship || 'Not stated'}</span><span>Deadline: {job.deadline && job.deadlineVerified ? job.deadline : 'Unverified / not stated'}</span></div>
-          <div className="job-card-actions"><label className="job-stage-control">Status <select value={normalizeJobStage(job.stage)} onChange={(event) => updateJob(job.id, { stage: event.target.value })} aria-label={`Status for ${job.title}`}>{jobStatusOptions(job.stage).map((stage) => <option key={stage}>{stage}</option>)}</select></label><button className="button button-outline track-job-button" disabled={Boolean(tracked)} onClick={() => onTrackApplication(job)}>{tracked ? 'In tracker' : 'Track application'}</button><button className="text-button" onClick={() => setExpandedJob(expandedJob === job.id ? null : job.id)}>{expandedJob === job.id ? 'Hide details' : 'Details, notes & score'}</button><button className="text-button" onClick={() => onTailorResume(job)}><FileText size={14} /> Tailor resume</button><button className="text-button" onClick={() => onCreateLetter(job)}><Plus size={14} /> Draft cover letter</button><button className="icon-button danger-button" onClick={() => removeJob(job.id)} aria-label={`Remove ${job.title}`}><Trash2 size={15} /></button></div>
+          <div className="job-card-actions"><label className="job-stage-control">Status <select value={normalizeJobStage(job.stage)} onChange={(event) => updateJob(job.id, { stage: event.target.value })} aria-label={`Status for ${job.title}`}>{jobStatusOptions(job.stage).map((stage) => <option key={stage}>{stage}</option>)}</select></label><button className="button button-outline track-job-button" disabled={Boolean(tracked)} onClick={() => onTrackApplication(job)}>{tracked ? 'In tracker' : 'Track application'}</button><button className="text-button" onClick={() => setExpandedJob(expandedJob === job.id ? null : job.id)}>{expandedJob === job.id ? 'Hide details' : 'Details, notes & score'}</button><button className="text-button" onClick={() => startEdit(job)}><Pencil size={14} /> Edit job</button>{safeUrl(job.applicationUrl) && <a className="text-button apply-link" href={safeUrl(job.applicationUrl)} target="_blank" rel="noreferrer"><Send size={14} /> Open official application</a>}<button className="text-button" onClick={() => onTailorResume(job)}><FileText size={14} /> Tailor resume</button><button className="text-button" onClick={() => onCreateLetter(job)}><Plus size={14} /> Draft cover letter</button><button className="icon-button danger-button" onClick={() => removeJob(job.id)} aria-label={`Remove ${job.title}`}><Trash2 size={15} /></button></div>
           {expandedJob === job.id && <div className="job-expanded">
             <div className="job-notes-editor">
               <label className="job-field"><span>Source</span><input list="job-source-suggestions" value={job.source || ''} onChange={(event) => updateJob(job.id, { source: event.target.value })} placeholder="Where you found it" /></label>
               <label className="job-field"><span>Original job URL</span><input type="url" value={job.jobUrl || ''} onChange={(event) => updateJob(job.id, { jobUrl: event.target.value.trim() })} placeholder="https://..." /></label>
+              <label className="job-field"><span>Official application URL</span><input type="url" value={job.applicationUrl || ''} onChange={(event) => updateJob(job.id, { applicationUrl: event.target.value.trim() })} placeholder="https://... (where you apply)" /></label>
               <div className="job-checked-control"><span>Last checked: <b>{job.lastChecked ? formatDate(job.lastChecked) : 'Not recorded'}</b></span><button type="button" className="button button-quiet" onClick={() => { updateJob(job.id, { lastChecked: todayIso() }); notify('Marked as checked today.'); }}><CalendarCheck size={15} /> I checked it today</button></div>
               <label className="job-field job-notes-field"><span>My notes</span><textarea rows={3} value={job.notes || ''} onChange={(event) => updateJob(job.id, { notes: event.target.value })} placeholder="Private notes. Saved automatically." /></label>
-              {job.jobUrl && !safeUrl(job.jobUrl) && <p className="job-form-error" role="alert"><CircleAlert size={15} /> This URL does not look valid. It should start with https://</p>}
+              {((job.jobUrl && !safeUrl(job.jobUrl)) || (job.applicationUrl && !safeUrl(job.applicationUrl))) && <p className="job-form-error" role="alert"><CircleAlert size={15} /> A URL does not look valid. It should start with https://</p>}
             </div>
             <div className="job-detail-grid"><Fact label="Region" value={job.region} /><Fact label="City" value={job.city} /><Fact label="Time zone" value={job.timeZone || 'Not stated'} /><Fact label="Relocation" value={job.relocationRequirement || 'Unknown'} /><Fact label="Employer authorization wording" value={job.workAuthorizationRequirement || 'Not stated'} /><Fact label="Visa sponsorship wording" value={job.visaSponsorship || 'Not stated'} /><Fact label="Language" value={job.languageRequirement || 'Not stated'} /><Fact label="Remote eligible countries" value={job.remoteEligibleCountries || 'Not stated; verify'} /><Fact label="Salary" value={job.salaryVerified && job.currency ? `${job.salaryMinimum || '—'}–${job.salaryMaximum || '—'} ${job.currency}` : 'Not verified; hidden'} /><Fact label="Source reviewed" value={job.sourceVerified ? 'Marked reviewed by you' : 'Not yet verified'} /></div>
             {job.salaryVerified && safeUrl(job.salarySource) && <a className="source-evidence-link" href={safeUrl(job.salarySource)} target="_blank" rel="noreferrer">Salary source<ExternalLink size={12} /></a>}
             {job.deadlineVerified && safeUrl(job.deadlineSource) && <a className="source-evidence-link" href={safeUrl(job.deadlineSource)} target="_blank" rel="noreferrer">Deadline source<ExternalLink size={12} /></a>}
             {safeUrl(job.jobUrl) && <a className="source-evidence-link" href={safeUrl(job.jobUrl)} target="_blank" rel="noreferrer">Open original posting<ExternalLink size={12} /></a>}
+            {safeUrl(job.applicationUrl) && <a className="source-evidence-link" href={safeUrl(job.applicationUrl)} target="_blank" rel="noreferrer">Open official application page<ExternalLink size={12} /></a>}
             <div className="fit-breakdown"><strong>How this planning score was formed</strong><div>{Object.entries(fit.factors).map(([label, value]) => <span key={label}>{label}<b>{value}</b></span>)}</div><small>Unknown authorization is not treated as eligible. Self-reported skills are not independently validated.</small></div>
             {fit.stretch && <div className="stretch-note"><strong>Experience may make this a stretch role.</strong><span>Consider stepping stones such as Product Analyst, Product Operations Associate, or an explicitly entry-level Associate Product Manager posting.</span></div>}
             {isInternational(job) ? <div className="international-checklist"><div><Globe2 size={16} /><strong>International role checklist · review each item yourself</strong></div><div className="checklist-grid">{CHECKLIST_ITEMS.map(([key, label]) => <label key={key}><span>{label}</span><select value={job.eligibilityChecklist?.[key] || 'unknown'} onChange={(event) => updateJob(job.id, { eligibilityChecklist: { ...emptyChecklist(), ...job.eligibilityChecklist, [key]: event.target.value } })}>{checklistStates.map(([value, stateLabel]) => <option key={value} value={value}>{stateLabel}</option>)}</select></label>)}</div><small>No citizenship, visa, work rights, education equivalency, language ability, or time-zone fit is assumed by this app.</small></div> : !job.country ? <p className="missing-country-note"><CircleAlert size={14} /> Country not recorded. Confirm the exact role location before evaluating international eligibility.</p> : <p className="domestic-note"><BadgeCheck size={14} /> Confirm country-specific authorization requirements from the employer; none are assumed.</p>}

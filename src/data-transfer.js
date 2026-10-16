@@ -47,7 +47,7 @@ export function mergeImportedData(current, imported) {
   if (!imported || typeof imported !== 'object' || Array.isArray(imported)) {
     throw new Error('The selected file must contain a JSON object.');
   }
-  const knownKeys = ['profile', 'resume', 'prep', 'applications', ...collectionKeys];
+  const knownKeys = ['profile', 'resume', 'prep', 'applications', 'facts', ...collectionKeys];
   if (!knownKeys.some((key) => Object.hasOwn(imported, key))) {
     throw new Error('The JSON file does not contain Career Studio data.');
   }
@@ -66,6 +66,14 @@ export function mergeImportedData(current, imported) {
   merged.applications = mergeRecords(current.applications, imported.applications, 'applications');
   for (const key of collectionKeys) {
     merged[key] = mergeRecords(current[key], imported[key], key);
+  }
+  if (imported.facts && typeof imported.facts === 'object' && !Array.isArray(imported.facts)) {
+    const currentFacts = current.facts && typeof current.facts === 'object' ? current.facts : {};
+    merged.facts = { ...currentFacts };
+    for (const [section, records] of Object.entries(imported.facts)) {
+      if (!Array.isArray(records)) continue;
+      merged.facts[section] = mergeRecords(currentFacts[section], records, section);
+    }
   }
   return merged;
 }

@@ -1,4 +1,5 @@
 import { normalizeJobStage } from './job-planning.js';
+import { downloadBlob } from './browser-actions.js';
 
 export const JOB_CSV_COLUMNS = [
   ['title', 'Job title'],
@@ -9,7 +10,8 @@ export const JOB_CSV_COLUMNS = [
   ['employmentType', 'Employment type'],
   ['experienceLevel', 'Experience level'],
   ['source', 'Source'],
-  ['jobUrl', 'Job URL'],
+  ['jobUrl', 'Job posting URL'],
+  ['applicationUrl', 'Official application URL'],
   ['lastChecked', 'Last checked'],
   ['sourceVerified', 'Source reviewed by me'],
   ['deadline', 'Verified deadline'],
@@ -38,6 +40,7 @@ function jobRow(job) {
     experienceLevel: job.experienceLevel,
     source: job.source,
     jobUrl: job.jobUrl,
+    applicationUrl: job.applicationUrl,
     lastChecked: job.lastChecked,
     sourceVerified: job.sourceVerified ? 'Yes' : 'No',
     deadline: job.deadlineVerified ? job.deadline : '',
@@ -67,13 +70,5 @@ export function jobsToCsv(jobs) {
 
 export function downloadJobsCsv(jobs) {
   // Byte-order mark helps Excel and Numbers read the ₹ symbol and other UTF-8 text correctly.
-  const file = new Blob(['﻿', jobsToCsv(jobs)], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(file);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `career-studio-jobs-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(new Blob(['\uFEFF', jobsToCsv(jobs)], { type: 'text/csv;charset=utf-8' }), `career-studio-jobs-${new Date().toISOString().slice(0, 10)}.csv`);
 }
