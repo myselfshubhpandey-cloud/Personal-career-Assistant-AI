@@ -2,6 +2,8 @@ import { findJobApplication } from './job-planning.js';
 
 const collectionKeys = [
   'jobs',
+  'discoverySources',
+  'discovered',
   'locationPreferences',
   'learningPlan',
   'letters',

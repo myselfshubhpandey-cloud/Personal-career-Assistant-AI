@@ -16,6 +16,7 @@ import {
   Mail,
   MessageSquareText,
   Plus,
+  Radar,
   Route,
   Sparkles,
   Target,
@@ -29,6 +30,7 @@ import { downloadJobsCsv } from './job-export.js';
 import ProfileEditor from './ProfileEditor.jsx';
 import ResumeBuilder from './ResumeBuilder.jsx';
 import DataStorage from './DataStorage.jsx';
+import JobFeeds from './JobFeeds.jsx';
 import { buildCoverLetterDraft, confirmedSkillNames, normalizeFacts } from './profile-facts.js';
 import { copyText, downloadBlob } from './browser-actions.js';
 import { mergeImportedData } from './data-transfer.js';
@@ -69,6 +71,8 @@ const initialData = {
     { id: 3, company: 'Figma', role: 'Product Designer, Growth', stage: 'Researching', date: '2026-10-02', isDemo: true },
   ],
   jobs: [],
+  discoverySources: [],
+  discovered: [],
   locationPreferences: [],
   learningPlan: COMBINED_LEARNING_PLAN,
   letters: [],
@@ -87,6 +91,7 @@ const navigation = [
   { label: 'Career profile', icon: UserRound },
   { label: 'Resume builder', icon: FileText },
   { label: 'Cover letters', icon: Mail },
+  { label: 'Job feeds', icon: Radar },
   { label: 'Job discovery', icon: BriefcaseBusiness },
   { label: 'Applications', icon: BriefcaseBusiness },
   { label: 'Company research', icon: Building2 },
@@ -150,6 +155,12 @@ function loadData() {
         jobs: Array.isArray(parsed.jobs)
           ? parsed.jobs.filter((job) => job && typeof job === 'object').map((job) => ({ ...job, stage: normalizeJobStage(job.stage) }))
           : initialData.jobs,
+        discoverySources: Array.isArray(parsed.discoverySources)
+          ? parsed.discoverySources.filter((item) => item && typeof item === 'object' && typeof item.type === 'string' && typeof item.token === 'string').map((item) => ({ ...item, checking: false }))
+          : initialData.discoverySources,
+        discovered: Array.isArray(parsed.discovered)
+          ? parsed.discovered.filter((item) => item && typeof item === 'object' && typeof item.id === 'string' && typeof item.title === 'string')
+          : initialData.discovered,
         locationPreferences: Array.isArray(parsed.locationPreferences) ? parsed.locationPreferences.filter((item) => item && typeof item === 'object') : initialData.locationPreferences,
         learningPlan: mergeLearningPlan(parsed.learningPlan),
         letters: Array.isArray(parsed.letters) ? parsed.letters.filter((letter) => letter && typeof letter === 'object') : initialData.letters,
@@ -196,6 +207,7 @@ function App() {
   const [storageReady, setStorageReady] = useState(!loaded.error);
   const [activeView, setActiveView] = useState('Overview');
   const [toast, setToast] = useState('');
+  const [prefillJob, setPrefillJob] = useState(null);
   const importInput = useRef(null);
 
   useEffect(() => {
@@ -257,6 +269,17 @@ function App() {
     } finally {
       event.target.value = '';
     }
+  };
+
+  const saveDiscoveredJob = (job) => {
+    setData((current) => ({ ...current, jobs: [{ ...job, stage: 'Saved' }, ...current.jobs] }));
+    notify(`${job.title} saved to your tracker. Open it in Job discovery to review the details.`);
+    return job.id;
+  };
+
+  const startManualFromUrl = (prefill) => {
+    setPrefillJob(prefill);
+    setActiveView('Job discovery');
   };
 
   const createLetterFromRole = (job) => {
@@ -343,7 +366,8 @@ function App() {
     'Career profile': <ProfileEditor data={data} update={update} getInitials={getInitials} />,
     'Resume builder': <ResumeBuilder data={data} update={update} notify={notify} onNavigate={setActiveView} />,
     'Cover letters': <CoverLetters data={data} update={update} notify={notify} onCreateFromJob={createLetterFromRole} />,
-    'Job discovery': <JobDiscovery data={jobMatchingData} update={update} notify={notify} onCreateLetter={createLetterFromRole} onTailorResume={tailorResumeFromRole} onTrackApplication={trackJobApplication} onUpdateJob={updateJob} onExportCsv={exportJobsCsv} />,
+    'Job feeds': <JobFeeds data={data} applyChange={setData} notify={notify} onSaveListing={saveDiscoveredJob} onOpenTracker={() => setActiveView('Job discovery')} onManualFromUrl={startManualFromUrl} />,
+    'Job discovery': <JobDiscovery data={jobMatchingData} update={update} notify={notify} onCreateLetter={createLetterFromRole} onTailorResume={tailorResumeFromRole} onTrackApplication={trackJobApplication} onUpdateJob={updateJob} onExportCsv={exportJobsCsv} prefill={prefillJob} onPrefillUsed={() => setPrefillJob(null)} />,
     Applications: <Applications data={data} update={update} onUpdateStage={updateApplicationStage} />,
     'Company research': <Research data={data} update={update} />,
     'LinkedIn drafts': <LinkedInDrafts data={data} update={update} />,

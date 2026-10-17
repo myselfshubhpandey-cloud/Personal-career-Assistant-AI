@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BadgeCheck, BriefcaseBusiness, CalendarCheck, Check, CircleAlert, Download, Pencil, Send, ExternalLink, FileText, Globe2, Plus, Search, SlidersHorizontal, Target, Trash2 } from 'lucide-react';
 import { analyzeJobDescription, buildJobSearchQuery, CHECKLIST_ITEMS, countJobsByStatus, EXPERIENCE_OPTIONS, externalJobSearches, filterJobListings, findJobApplication, getJobFit, INDUSTRIES, JOB_STATUSES, jobStatusOptions, normalizeJobStage, PRIORITY_FAMILIES, priorityForRole, searchJobs } from './job-planning.js';
 import './job-planning.css';
@@ -108,7 +108,7 @@ function isInternational(job) {
   return Boolean(job.country) && job.country.trim().toLowerCase() !== 'india';
 }
 
-export default function JobDiscovery({ data, update, notify, onCreateLetter, onTailorResume, onTrackApplication, onUpdateJob, onExportCsv }) {
+export default function JobDiscovery({ data, update, notify, onCreateLetter, onTailorResume, onTrackApplication, onUpdateJob, onExportCsv, prefill, onPrefillUsed }) {
   const jobs = Array.isArray(data.jobs) ? data.jobs : [];
   const locationPreferences = Array.isArray(data.locationPreferences)
     ? data.locationPreferences.filter((item) => item && typeof item === 'object')
@@ -132,6 +132,17 @@ export default function JobDiscovery({ data, update, notify, onCreateLetter, onT
   const [formError, setFormError] = useState('');
   const [editingId, setEditingId] = useState(null);
   const formRef = useRef(null);
+
+  // Opens the add form pre-filled when a link was sent here from "Import from link".
+  useEffect(() => {
+    if (!prefill) return;
+    setDraft({ ...emptyJob(), ...prefill });
+    setEditingId(null);
+    setFormError('');
+    setIsAdding(true);
+    onPrefillUsed?.();
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }, [prefill, onPrefillUsed]);
 
   const setFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
   const setDraftField = (key, value) => setDraft((current) => ({ ...current, [key]: value }));

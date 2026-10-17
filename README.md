@@ -9,6 +9,7 @@ A private, local-first career workspace for planning a job search. It is built w
 - **Resume builder** — builds a plain-text resume only from confirmed facts. Missing facts appear as highlighted **[placeholders]** with a checklist of gaps. You can tailor it to a saved job (matching confirmed skills are listed first; missing skills are shown to you but never added). Copy it or download a .txt.
 - **Cover letters** — start a draft from any saved job. It uses only confirmed facts and leaves [placeholders] for anything you must write yourself, such as why you want that company. The editor shows how many placeholders are left.
 - **Data & storage** — shows whether saving works, how much data is stored, when you last made a backup, and whether the browser has agreed to protect the data. Explains exactly what happens if browser data is cleared.
+- **Job feeds** — finds real listings from employers' official public job boards (Greenhouse and Ashby) and, optionally, Remotive's free remote-jobs feed. Only Business/Data Analyst, Product Analyst/entry-level Product, Operations, Marketing, Finance, fintech and healthcare roles in India or remote are kept. Each listing shows facts from the feed (title, employer, location, remote status, official link, source, dates, experience and education wording) separately from an **estimated match** that explains why it may suit you and which skills you may still need to learn. Likely duplicates are flagged, and you can filter by role, location, experience, remote status and source. "Import from link" reads single Greenhouse or Ashby job links, and opens a pre-filled manual form for anything else (Lever, Naukri, LinkedIn, Workday, company sites).
 - **Job discovery (job tracker)** — add jobs you checked yourself with title, company, location, job posting URL, **official application URL** (the employer page where you apply), source, last-checked date, description and private notes. Tap **Edit job** on any saved job to change any field. Track each job as **Saved, Interested, Preparing, Applied, Interview, Rejected or Offer**. Search by title, company, skills, source or notes, filter by status, open details to edit notes, and compare a pasted job description with your skills. It does not use a live vacancy API.
 - **CSV export** — **Export jobs CSV** downloads your job tracker as a spreadsheet file that opens in Numbers, Excel or Google Sheets. Unverified salaries are left out, and cells are protected so pasted text cannot run as a spreadsheet formula.
 - **Applications** — a status tracker for opportunities you choose to save.
@@ -51,13 +52,41 @@ To run it from your own computer on the same Wi-Fi instead, run the same develop
 
 After GitHub Pages has been enabled and its deployment workflow has succeeded, open the HTTPS Pages address in Safari. Tap **Share → Add to Home Screen**. That installed copy can reopen the cached app shell offline after it has first loaded online. It does not need Codespaces to stay running. Your saved data belongs to that exact Safari site address and stays on that iPad; use **Export my data** before clearing Safari website data or moving to another device.
 
+## Job feeds: which sources are used and why
+
+| Source | Cost / login | Used how | Notes |
+|---|---|---|---|
+| Greenhouse employer job boards | Free, no login | Read automatically | Greenhouse documents these public feeds and supports browser access (JSONP). |
+| Ashby employer job boards | Free, no login | Read automatically | Browser access is not documented. If a board refuses, the app shows an error and keeps your data. |
+| Remotive remote jobs | Free, no login | Optional | Shown after a 24-hour delay and credited to Remotive, as its terms require. Checked at most every 6 hours. Many jobs are not open to India. |
+| Lever | Free | Manual import only | Lever's docs say its feed refuses requests from other websites, so the app does not try. |
+| LinkedIn, Naukri, Indeed, Workday, company sites | No free public feed | Manual import only | Never scraped. Paste the link and the app opens a pre-filled form. |
+
+The app never logs in anywhere, never bypasses CAPTCHAs or rate limits, never uses proxies, and never applies or sends anything. Each working source is checked at most every 30 minutes (Remotive every 6 hours). A failed check leaves your saved jobs and earlier results untouched. Listings that disappear from an employer's feed are marked "No longer in the employer's feed" instead of being deleted, and unsaved ones are removed after 30 days.
+
+**The match score is an estimate.** It uses only facts you confirmed in Career profile. It does not assume professional experience or skills you have not confirmed. Always read the official listing before applying.
+
+### Set up job feeds on your iPad
+
+1. In Safari, open a company's careers page and tap any job.
+2. Look at the address bar. If it shows `job-boards.greenhouse.io/NAME`, `boards.greenhouse.io/NAME` or `jobs.ashbyhq.com/NAME`, that company has a free feed. Tap the address bar and copy the link.
+3. Open Career Studio, tap **Job feeds**, paste the link into **Careers page link or board name**, and tap **Add source**.
+4. Tap **Check now**. Matching roles appear below with their official links.
+5. Tap **Save to tracker** on a role you like. It appears in **Job discovery** with status Saved, where you can edit it, track it and draft a resume or cover letter for it.
+6. For a job on any other site (LinkedIn, Naukri, Lever, Workday), paste its link into **Import from link** and tap **Add manually**. Copy the details from the listing yourself.
+
+If a company's careers page uses its own domain, the board name may be hidden. Import single jobs by link instead.
+
+The published app includes a browser security policy that only allows connections to these three feeds.
+
 ## How next actions are chosen
 
 The dashboard only looks at jobs you saved. It suggests, in this order: a verified deadline within 7 days, jobs at Interview stage, jobs at Preparing stage, jobs marked Applied 14 or more days ago (follow-up), and jobs whose original posting you have not yet marked as reviewed. Nothing is fetched or invented.
 
 ## Honest limitations
 
-- **No live job search.** There is no free, reliable job feed that can be used without scraping or breaking job-site terms, so jobs are added manually. The external links only open job sites in Safari for your own research.
+- **Job feeds only cover companies you add.** There is no free, permitted feed covering all Indian job sites, so you add the Greenhouse or Ashby boards of companies you care about. Many Indian employers use other systems (Workday, Naukri, their own sites), and those jobs must be imported by link and filled in manually.
+- **Ashby and Remotive may refuse browser requests.** Their docs do not confirm browser access. If they refuse, the source shows an error; use Import from link instead.
 - **Data lives in one browser on one device.** Nothing is uploaded or synced. On iPad, the Home Screen app and a Safari tab usually have **separate** storage, so data typed in one may not appear in the other.
 - **Clearing browser data deletes it permanently.** Settings > Apps > Safari > Clear History and Website Data, removing the site under Website Data, deleting the Home Screen app, or using Private Browsing all lose the data. Only a backup file can bring it back.
 - **Safari may clear storage for sites you have not opened in a while** (around 7 days of Safari use). Home Screen web apps are generally exempt. The Data & storage page can ask the browser for extra protection, but the browser decides.
