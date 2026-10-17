@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ArrowDownToLine,
   ArrowUpRight,
   BadgeCheck,
   BriefcaseBusiness,
   Building2,
   Check,
   ChevronRight,
-  Circle,
   Copy,
   Download,
   FileText,
